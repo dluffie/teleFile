@@ -78,7 +78,8 @@ export default function SharedFile() {
         <div className="auth-page">
             <div className="auth-card" style={{ textAlign: 'center' }}>
                 <div className="logo">
-                    <h1>☁️ TeleFile</h1>
+                    <img src="/logo.png" alt="TeleFile" style={{ width: 48, height: 48, objectFit: 'contain' }} />
+                    <h1>TeleFile</h1>
                     <p>Shared File</p>
                 </div>
 

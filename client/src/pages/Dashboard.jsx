@@ -47,6 +47,7 @@ export default function Dashboard({ page }) {
     const [viewMode, setViewMode] = useState('grid');
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [breadcrumbs, setBreadcrumbs] = useState([]);
+    const [currentFolderName, setCurrentFolderName] = useState(null);
 
     // Upload state
     const [showUpload, setShowUpload] = useState(false);
@@ -96,31 +97,39 @@ export default function Dashboard({ page }) {
         fetchData();
     }, [fetchData]);
 
-    // Build breadcrumbs
+    // Fetch current folder name and breadcrumbs
     useEffect(() => {
         if (currentFolderId) {
-            buildBreadcrumbs(currentFolderId);
+            fetchFolderName(currentFolderId);
         } else {
+            setCurrentFolderName(null);
             setBreadcrumbs([]);
         }
     }, [currentFolderId]);
 
-    async function buildBreadcrumbs(fId) {
-        const crumbs = [];
-        let id = fId;
-        while (id) {
-            try {
-                const res = await api.get('/folders', { params: { parentId: id } });
-                // We need to get the folder info — find it by fetching parent
-                const folderRes = await api.get('/folders');
-                const allFolders = folderRes.data.folders;
-                // Simple approach: just build from URL for now
-                break;
-            } catch {
-                break;
+    async function fetchFolderName(fId) {
+        try {
+            const res = await api.get(`/folders/${fId}`);
+            const folder = res.data.folder;
+            setCurrentFolderName(folder.name);
+
+            // Build breadcrumb chain by walking up parentId
+            const crumbs = [{ id: folder._id, name: folder.name }];
+            let parentId = folder.parentId;
+            while (parentId) {
+                try {
+                    const parentRes = await api.get(`/folders/${parentId}`);
+                    crumbs.unshift({ id: parentRes.data.folder._id, name: parentRes.data.folder.name });
+                    parentId = parentRes.data.folder.parentId;
+                } catch {
+                    break;
+                }
             }
+            setBreadcrumbs(crumbs);
+        } catch {
+            setCurrentFolderName('Folder');
+            setBreadcrumbs([]);
         }
-        setBreadcrumbs(crumbs);
     }
 
     // Close context menu on click outside
@@ -175,6 +184,8 @@ export default function Dashboard({ page }) {
             progress: 0,
             status: 'pending',
             error: null,
+            chunksUploaded: 0,
+            totalChunks: Math.ceil(f.size / CHUNK_SIZE),
         }));
         setUploadFiles(items);
 
@@ -208,7 +219,7 @@ export default function Dashboard({ page }) {
 
                     // Update progress
                     const progress = Math.round(((chunk + 1) / totalChunks) * 100);
-                    items[i] = { ...items[i], progress, status: 'uploading' };
+                    items[i] = { ...items[i], progress, status: 'uploading', chunksUploaded: chunk + 1 };
                     setUploadFiles([...items]);
                 }
 
@@ -318,7 +329,8 @@ export default function Dashboard({ page }) {
         { path: '/trash', icon: FiTrash2, label: 'Trash', active: isTrash },
     ];
 
-    const storagePercent = user ? Math.min((user.storageUsed / user.storageLimit) * 100, 100) : 0;
+    // Storage is unlimited (Telegram-backed), show usage only
+    const storageUsed = user?.storageUsed || 0;
 
     return (
         <div className="app-layout">
@@ -328,7 +340,8 @@ export default function Dashboard({ page }) {
             {/* Sidebar */}
             <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
                 <div className="sidebar-logo">
-                    <h1>☁️ TeleFile</h1>
+                    <img src="/logo.png" alt="TeleFile" style={{ width: 32, height: 32, objectFit: 'contain' }} />
+                    <h1>TeleFile</h1>
                 </div>
 
                 <div className="upload-btn-wrap">
@@ -356,11 +369,11 @@ export default function Dashboard({ page }) {
 
                 <div className="storage-section">
                     <div className="storage-info">
-                        <span>{formatBytes(user?.storageUsed || 0)} used</span>
-                        <span>{formatBytes(user?.storageLimit || 0)}</span>
+                        <span>{formatBytes(storageUsed)} used</span>
+                        <span>Unlimited</span>
                     </div>
                     <div className="storage-bar">
-                        <div className="storage-bar-fill" style={{ width: `${storagePercent}%` }} />
+                        <div className="storage-bar-fill" style={{ width: storageUsed > 0 ? '100%' : '0%', background: 'var(--gradient-accent)', opacity: 0.4 }} />
                     </div>
                 </div>
             </aside>
@@ -378,14 +391,16 @@ export default function Dashboard({ page }) {
                             <button className="breadcrumb-item" onClick={() => navigate('/drive')}>
                                 <FiHome />
                             </button>
-                            {folderId && (
-                                <>
+                            {breadcrumbs.map((crumb, idx) => (
+                                <span key={crumb.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <FiChevronRight className="breadcrumb-sep" />
-                                    <span className="breadcrumb-item current">
-                                        {folders.length > 0 ? 'Folder' : '…'}
-                                    </span>
-                                </>
-                            )}
+                                    {idx === breadcrumbs.length - 1 ? (
+                                        <span className="breadcrumb-item current">{crumb.name}</span>
+                                    ) : (
+                                        <button className="breadcrumb-item" onClick={() => navigate(`/drive/${crumb.id}`)}>{crumb.name}</button>
+                                    )}
+                                </span>
+                            ))}
                             {isTrash && (
                                 <>
                                     <FiChevronRight className="breadcrumb-sep" />
@@ -576,6 +591,13 @@ export default function Dashboard({ page }) {
                             </button>
                         </div>
                         <div className="modal-body">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', marginBottom: 16, background: 'rgba(99, 102, 241, 0.08)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                                <FiFolder style={{ color: '#fbbf24', fontSize: 18, flexShrink: 0 }} />
+                                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Uploading to:</span>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    {currentFolderName || 'My Drive'}
+                                </span>
+                            </div>
                             <div className="dropzone" id="upload-dropzone">
                                 <input
                                     type="file"
@@ -595,7 +617,9 @@ export default function Dashboard({ page }) {
                                             <FiFile />
                                             <div className="file-info">
                                                 <div className="file-name">{uf.name}</div>
-                                                <div className="file-size-info">{formatBytes(uf.size)}</div>
+                                                <div className="file-size-info">
+                                                    {formatBytes(uf.size)} • {uf.totalChunks} chunk{uf.totalChunks !== 1 ? 's' : ''} ({formatBytes(CHUNK_SIZE)} each)
+                                                </div>
                                                 <div className="progress-bar">
                                                     <div
                                                         className={`progress-bar-fill ${uf.status === 'error' ? 'error' : ''}`}
@@ -603,10 +627,10 @@ export default function Dashboard({ page }) {
                                                     />
                                                 </div>
                                                 <div className={`upload-status ${uf.status}`}>
-                                                    {uf.status === 'pending' && 'Waiting…'}
-                                                    {uf.status === 'uploading' && `Uploading — ${uf.progress}%`}
-                                                    {uf.status === 'complete' && '✓ Complete'}
-                                                    {uf.status === 'error' && `✗ ${uf.error}`}
+                                                    {uf.status === 'pending' && `⏳ Waiting — 0/${uf.totalChunks} chunks`}
+                                                    {uf.status === 'uploading' && `⬆ Chunk ${uf.chunksUploaded}/${uf.totalChunks} — ${uf.progress}%`}
+                                                    {uf.status === 'complete' && `✓ Complete — ${uf.totalChunks} chunk${uf.totalChunks !== 1 ? 's' : ''} uploaded`}
+                                                    {uf.status === 'error' && `✗ Failed at chunk ${uf.chunksUploaded}/${uf.totalChunks} — ${uf.error}`}
                                                 </div>
                                             </div>
                                         </div>

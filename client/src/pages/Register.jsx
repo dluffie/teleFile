@@ -29,7 +29,8 @@ export default function Register() {
         <div className="auth-page">
             <div className="auth-card">
                 <div className="logo">
-                    <h1>☁️ TeleFile</h1>
+                    <img src="/logo.png" alt="TeleFile" style={{ width: 48, height: 48, objectFit: 'contain' }} />
+                    <h1>TeleFile</h1>
                     <p>Your unlimited cloud drive</p>
                 </div>
 

@@ -207,6 +207,90 @@ router.get('/:id/download', auth, async (req, res) => {
     }
 });
 
+// GET /api/files/:id/preview — stream file for inline viewing (images, videos, PDFs)
+router.get('/:id/preview', auth, async (req, res) => {
+    try {
+        const file = await File.findOne({
+            _id: req.params.id,
+            ownerId: req.userId,
+            uploadComplete: true,
+        });
+
+        if (!file) {
+            return res.status(404).json({ error: 'File not found or upload incomplete' });
+        }
+
+        const mimeType = file.mimeType || 'application/octet-stream';
+
+        // Set inline headers — browser will display instead of downloading
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.name)}"`);
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+
+        // For videos, we need to fetch ALL chunks into a single buffer to support range requests
+        // This is needed because video players require seeking capability
+        if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
+            const sortedChunks = [...file.chunks].sort((a, b) => a.partNumber - b.partNumber);
+            const buffers = [];
+
+            for (const chunk of sortedChunks) {
+                const stream = await telegram.downloadChunk(chunk.telegramFileId);
+                const chunkBufs = [];
+                await new Promise((resolve, reject) => {
+                    stream.on('data', (d) => chunkBufs.push(d));
+                    stream.on('end', () => { buffers.push(Buffer.concat(chunkBufs)); resolve(); });
+                    stream.on('error', reject);
+                });
+            }
+
+            const fullBuffer = Buffer.concat(buffers);
+            const totalSize = fullBuffer.length;
+
+            // Handle Range requests for video seeking
+            const range = req.headers.range;
+            if (range) {
+                const parts = range.replace(/bytes=/, '').split('-');
+                const start = parseInt(parts[0], 10);
+                const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+                const chunkLength = end - start + 1;
+
+                res.status(206);
+                res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+                res.setHeader('Content-Length', chunkLength);
+                res.end(fullBuffer.subarray(start, end + 1));
+            } else {
+                res.setHeader('Content-Length', totalSize);
+                res.end(fullBuffer);
+            }
+            return;
+        }
+
+        // For images and other files, just stream directly
+        if (file.size) {
+            res.setHeader('Content-Length', file.size);
+        }
+
+        const sortedChunks = [...file.chunks].sort((a, b) => a.partNumber - b.partNumber);
+
+        for (const chunk of sortedChunks) {
+            const stream = await telegram.downloadChunk(chunk.telegramFileId);
+            await new Promise((resolve, reject) => {
+                stream.pipe(res, { end: false });
+                stream.on('end', resolve);
+                stream.on('error', reject);
+            });
+        }
+
+        res.end();
+    } catch (err) {
+        console.error('Preview error:', err);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Preview failed' });
+        }
+    }
+});
+
 // DELETE /api/files/:id (soft delete)
 router.delete('/:id', auth, async (req, res) => {
     try {

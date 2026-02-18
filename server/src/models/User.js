@@ -24,7 +24,7 @@ const userSchema = new mongoose.Schema({
     },
     storageLimit: {
         type: Number,
-        default: 15 * 1024 * 1024 * 1024, // 15 GB default
+        default: 0, // 0 = unlimited (Telegram-backed, no real cap)
     },
     createdAt: {
         type: Date,
