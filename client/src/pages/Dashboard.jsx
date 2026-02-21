@@ -9,6 +9,7 @@ import {
     FiMoreVertical, FiDownload, FiShare2, FiEdit3, FiX, FiChevronRight,
     FiMenu, FiLogOut, FiPlus, FiRefreshCw, FiHome, FiLink, FiCopy
 } from 'react-icons/fi';
+import FilePreview from '../components/FilePreview';
 
 const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB
 
@@ -61,6 +62,7 @@ export default function Dashboard({ page }) {
     const [renameModal, setRenameModal] = useState(null);
     const [newFolderModal, setNewFolderModal] = useState(false);
     const [shareModal, setShareModal] = useState(null);
+    const [previewFile, setPreviewFile] = useState(null);
 
     const currentFolderId = folderId || null;
     const isTrash = page === 'trash';
@@ -475,6 +477,7 @@ export default function Dashboard({ page }) {
                                     <div
                                         key={file._id}
                                         className="item-card"
+                                        onClick={() => setPreviewFile(file)}
                                         onContextMenu={(e) => handleContextMenu(e, file, 'file')}
                                     >
                                         <div className={`icon ${cls}`}><Icon /></div>
@@ -515,6 +518,7 @@ export default function Dashboard({ page }) {
                                     <div
                                         key={file._id}
                                         className="item-row"
+                                        onClick={() => setPreviewFile(file)}
                                         onContextMenu={(e) => handleContextMenu(e, file, 'file')}
                                     >
                                         <div className={`icon ${cls}`}><Icon /></div>
@@ -667,6 +671,15 @@ export default function Dashboard({ page }) {
                 <ShareModal
                     data={shareModal}
                     onClose={() => setShareModal(null)}
+                />
+            )}
+
+            {/* File Preview */}
+            {previewFile && (
+                <FilePreview
+                    file={previewFile}
+                    onClose={() => setPreviewFile(null)}
+                    onDownload={downloadFile}
                 />
             )}
         </div>

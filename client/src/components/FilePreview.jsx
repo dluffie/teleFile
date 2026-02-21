@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { FiX, FiDownload, FiFile, FiMaximize2, FiMinimize2, FiMusic } from 'react-icons/fi';
-import api from '../api/client';
+import api, { API_BASE } from '../api/client';
 
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
@@ -13,7 +13,7 @@ function formatBytes(bytes) {
 export default function FilePreview({ file, onClose, onDownload }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [blobUrl, setBlobUrl] = useState(null);
+    const [previewUrl, setPreviewUrl] = useState(null);
     const [fullscreen, setFullscreen] = useState(false);
     const containerRef = useRef(null);
 
@@ -29,39 +29,18 @@ export default function FilePreview({ file, onClose, onDownload }) {
             return;
         }
 
-        let cancelled = false;
+        // Construct direct URL with token
+        const token = localStorage.getItem('telefile_token');
+        const url = `${API_BASE}/api/files/${file._id}/preview?token=${token}`;
 
-        async function fetchPreview() {
-            try {
-                setLoading(true);
-                setError(null);
+        // For video/audio/pdf, we can just set the URL and let the browser handle loading state
+        // For images, we might want to preload to know when it's done
+        setPreviewUrl(url);
 
-                const token = localStorage.getItem('token');
-                const response = await fetch(`/api/files/${file._id}/preview`, {
-                    headers: { Authorization: `Bearer ${token}` },
-                });
-
-                if (!response.ok) throw new Error('Failed to load preview');
-
-                const blob = await response.blob();
-                if (cancelled) return;
-
-                const url = URL.createObjectURL(blob);
-                setBlobUrl(url);
-                setLoading(false);
-            } catch (err) {
-                if (cancelled) return;
-                setError(err.message || 'Preview failed');
-                setLoading(false);
-            }
+        if (!isImage) {
+            setLoading(false);
         }
 
-        fetchPreview();
-
-        return () => {
-            cancelled = true;
-            if (blobUrl) URL.revokeObjectURL(blobUrl);
-        };
     }, [file._id]);
 
     const toggleFullscreen = () => {
@@ -122,13 +101,10 @@ export default function FilePreview({ file, onClose, onDownload }) {
 
                 {/* Content */}
                 <div className="preview-body">
-                    {loading && (
+                    {loading && isImage && (
                         <div className="preview-loading">
                             <div className="preview-spinner" />
                             <p>Loading preview…</p>
-                            <span className="preview-loading-detail">
-                                Fetching {file.totalChunks || 1} chunk{(file.totalChunks || 1) !== 1 ? 's' : ''} from Telegram
-                            </span>
                         </div>
                     )}
 
@@ -154,40 +130,53 @@ export default function FilePreview({ file, onClose, onDownload }) {
                         </div>
                     )}
 
-                    {!loading && !error && blobUrl && isImage && (
+                    {!error && previewUrl && isImage && (
                         <div className="preview-image-wrap">
                             <img
-                                src={blobUrl}
+                                src={previewUrl}
                                 alt={file.name}
                                 className="preview-image"
                                 onLoad={() => setLoading(false)}
+                                onError={() => {
+                                    setError('Failed to load image');
+                                    setLoading(false);
+                                }}
+                                style={{ display: loading ? 'none' : 'block' }}
                             />
                         </div>
                     )}
 
-                    {!loading && !error && blobUrl && isVideo && (
+                    {!error && previewUrl && isVideo && (
                         <video
-                            src={blobUrl}
+                            src={previewUrl}
                             className="preview-video"
                             controls
                             autoPlay
                             playsInline
+                            onError={() => setError('Failed to stream video')}
                         />
                     )}
 
-                    {!loading && !error && blobUrl && isAudio && (
+                    {!error && previewUrl && isAudio && (
                         <div className="preview-audio-wrap">
                             <FiMusic style={{ fontSize: 80, opacity: 0.2 }} />
                             <p style={{ marginBottom: 20, color: 'var(--text-secondary)' }}>{file.name}</p>
-                            <audio src={blobUrl} controls autoPlay style={{ width: '100%', maxWidth: 480 }} />
+                            <audio
+                                src={previewUrl}
+                                controls
+                                autoPlay
+                                style={{ width: '100%', maxWidth: 480 }}
+                                onError={() => setError('Failed to stream audio')}
+                            />
                         </div>
                     )}
 
-                    {!loading && !error && blobUrl && isPdf && (
+                    {!error && previewUrl && isPdf && (
                         <iframe
-                            src={blobUrl}
+                            src={previewUrl}
                             className="preview-pdf"
                             title={file.name}
+                            onError={() => setError('Failed to load PDF')}
                         />
                     )}
                 </div>

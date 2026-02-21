@@ -221,57 +221,72 @@ router.get('/:id/preview', auth, async (req, res) => {
         }
 
         const mimeType = file.mimeType || 'application/octet-stream';
+        const fileSize = file.size;
 
-        // Set inline headers — browser will display instead of downloading
+        // Set inline headers
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.name)}"`);
         res.setHeader('Content-Type', mimeType);
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'private, max-age=3600');
 
-        // For videos, we need to fetch ALL chunks into a single buffer to support range requests
-        // This is needed because video players require seeking capability
-        if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
-            const sortedChunks = [...file.chunks].sort((a, b) => a.partNumber - b.partNumber);
-            const buffers = [];
+        // Sort chunks
+        const sortedChunks = [...file.chunks].sort((a, b) => a.partNumber - b.partNumber);
 
+        // Handle Range requests (Crucial for video seeking)
+        const range = req.headers.range;
+        if (range) {
+            const parts = range.replace(/bytes=/, '').split('-');
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const chunkLength = end - start + 1;
+
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+            res.setHeader('Content-Length', chunkLength);
+
+            // Calculate which chunks we need
+            let currentOffset = 0;
             for (const chunk of sortedChunks) {
-                const stream = await telegram.downloadChunk(chunk.telegramFileId);
-                const chunkBufs = [];
-                await new Promise((resolve, reject) => {
-                    stream.on('data', (d) => chunkBufs.push(d));
-                    stream.on('end', () => { buffers.push(Buffer.concat(chunkBufs)); resolve(); });
-                    stream.on('error', reject);
-                });
+                const chunkStart = currentOffset;
+                const chunkEnd = currentOffset + chunk.size - 1;
+
+                // Check if this chunk overlaps with requested range
+                if (chunkEnd >= start && chunkStart <= end) {
+                    // Overlap found
+                    const stream = await telegram.downloadChunk(chunk.telegramFileId);
+
+                    // We need to slice the chunk stream if it's partially requested
+                    // For simplicity in this implementation, we'll pipe the key parts.
+                    // Note: Ideally we'd slice the buffer, but getting a stream from TG makes exact byte slicing tricky without buffering the chunk.
+                    // Standard strategy: Stream the whole relevant chunks and let client/browser handle the extra bytes if any, 
+                    // OR buffer just the specific chunks needed.
+
+                    // Since chunks are 20MB max, buffering ONE chunk at a time is acceptable.
+
+                    const chunkBuffer = await new Promise((resolve, reject) => {
+                        const chunks = [];
+                        stream.on('data', c => chunks.push(c));
+                        stream.on('end', () => resolve(Buffer.concat(chunks)));
+                        stream.on('error', reject);
+                    });
+
+                    // Calculate slice relative to chunk
+                    const startInChunk = Math.max(0, start - chunkStart);
+                    const endInChunk = Math.min(chunk.size - 1, end - chunkStart);
+
+                    const sliced = chunkBuffer.subarray(startInChunk, endInChunk + 1);
+                    res.write(sliced);
+                }
+
+                currentOffset += chunk.size;
+                if (currentOffset > end) break;
             }
-
-            const fullBuffer = Buffer.concat(buffers);
-            const totalSize = fullBuffer.length;
-
-            // Handle Range requests for video seeking
-            const range = req.headers.range;
-            if (range) {
-                const parts = range.replace(/bytes=/, '').split('-');
-                const start = parseInt(parts[0], 10);
-                const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
-                const chunkLength = end - start + 1;
-
-                res.status(206);
-                res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
-                res.setHeader('Content-Length', chunkLength);
-                res.end(fullBuffer.subarray(start, end + 1));
-            } else {
-                res.setHeader('Content-Length', totalSize);
-                res.end(fullBuffer);
-            }
+            res.end();
             return;
         }
 
-        // For images and other files, just stream directly
-        if (file.size) {
-            res.setHeader('Content-Length', file.size);
-        }
-
-        const sortedChunks = [...file.chunks].sort((a, b) => a.partNumber - b.partNumber);
+        // No Range request — stream all chunks sequentially
+        res.setHeader('Content-Length', fileSize);
 
         for (const chunk of sortedChunks) {
             const stream = await telegram.downloadChunk(chunk.telegramFileId);
@@ -281,8 +296,8 @@ router.get('/:id/preview', auth, async (req, res) => {
                 stream.on('error', reject);
             });
         }
-
         res.end();
+
     } catch (err) {
         console.error('Preview error:', err);
         if (!res.headersSent) {
