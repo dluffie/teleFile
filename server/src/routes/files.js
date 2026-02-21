@@ -352,12 +352,22 @@ router.delete('/:id/permanent', auth, async (req, res) => {
             return res.status(404).json({ error: 'File not found' });
         }
 
-        // Delete chunks from Telegram
+        // Delete chunks from Telegram (or mark as #deleted if > 48h old)
         for (const chunk of file.chunks) {
             try {
-                await uploadQueue.enqueue(() => telegram.deleteMessage(chunk.telegramMessageId));
+                const deleted = await uploadQueue.enqueue(() => telegram.deleteMessage(chunk.telegramMessageId));
+                if (!deleted) {
+                    // Message too old to delete — mark caption as #deleted for manual cleanup
+                    await uploadQueue.enqueue(() => telegram.markAsDeleted(chunk.telegramMessageId, file.name));
+                }
             } catch (err) {
+                // Deletion failed — try marking as #deleted instead
                 console.warn(`Failed to delete TG message ${chunk.telegramMessageId}:`, err.message);
+                try {
+                    await uploadQueue.enqueue(() => telegram.markAsDeleted(chunk.telegramMessageId, file.name));
+                } catch (markErr) {
+                    console.warn(`Failed to mark TG message ${chunk.telegramMessageId}:`, markErr.message);
+                }
             }
         }
 

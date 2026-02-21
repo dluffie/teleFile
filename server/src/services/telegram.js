@@ -62,6 +62,7 @@ async function downloadChunk(fileId) {
 /**
  * Delete a message from the storage channel
  * @param {number} messageId
+ * @returns {boolean} true if deleted successfully
  */
 async function deleteMessage(messageId) {
     const res = await fetch(`${API_BASE()}/deleteMessage`, {
@@ -80,4 +81,34 @@ async function deleteMessage(messageId) {
     return data.ok;
 }
 
-module.exports = { uploadChunk, downloadChunk, deleteMessage };
+/**
+ * Mark a message as deleted by editing its caption to #deleted
+ * This is used when deleteMessage fails (message > 48h old).
+ * Admin can search #deleted in the chat to find and clean up manually.
+ * @param {number} messageId
+ * @param {string} fileName - original file name for reference
+ */
+async function markAsDeleted(messageId, fileName) {
+    try {
+        const res = await fetch(`${API_BASE()}/editMessageCaption`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: CHAT_ID(),
+                message_id: messageId,
+                caption: `#deleted ${fileName || 'unknown'}`,
+            }),
+        });
+
+        const data = await res.json();
+        if (!data.ok) {
+            console.warn(`Telegram markAsDeleted warning: ${data.description}`);
+        }
+        return data.ok;
+    } catch (err) {
+        console.warn(`markAsDeleted failed for message ${messageId}:`, err.message);
+        return false;
+    }
+}
+
+module.exports = { uploadChunk, downloadChunk, deleteMessage, markAsDeleted };

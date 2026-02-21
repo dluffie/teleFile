@@ -240,7 +240,12 @@ export default function Dashboard({ page }) {
         setUploading(false);
         fetchData();
         refreshUser();
-        toast.success('Upload complete!');
+        // Brief delay so user sees the completion status, then auto-close
+        setTimeout(() => {
+            toast.success('Upload complete!');
+            setShowUpload(false);
+            setUploadFiles([]);
+        }, 1500);
     };
 
     const downloadFile = async (file) => {
